@@ -13,6 +13,7 @@ class Mi23StdClient(Peer):
     def post_init(self):
         print "post_init(): %s here!" % self.id
         self.piece_ownership = dict()
+        self.num_open_slots = 4
 
     def update_piece_ownership(self, peers):
         """
@@ -29,6 +30,42 @@ class Mi23StdClient(Peer):
         np = needed_pieces.copy()
         np.sort(key=lambda n: len(self.piece_ownership[n]))
         return np
+
+    def get_download_history(self, history):
+        """
+        Create dictionary of how much the client downloaded from its peers
+        in the last two rounds
+        """
+        dl_hist_dict = dict()
+
+        # first look at dl history from last round
+        for dl_hist_past in history.downloads[history.last_round()]:
+            dl_hist_dict[dl_hist_past.from_id] = dl_hist_past.blocks
+
+        # then, look at dl history from current round
+        for dl_hist_curr in history.downloads[history.current_round()]:
+            if dl_hist_dict[dl_hist_curr.from_id] is None:
+                dl_hist_dict[dl_hist_curr.from_id] = dl_hist_curr.blocks
+            else:
+                dl_hist_dict[dl_hist_curr.from_id] += dl_hist_curr.blocks
+
+        return dl_hist_dict
+
+    def order_download_rate(self, history, requests):
+        """
+        Create dictionary of download rate, rank the requesters in the order
+        of download rate
+        """
+
+        download_hist_dict = self.get_download_history(history)
+
+        r_ids = [request.requester_id for request in requests]
+        r_ids.sort(
+            lambda r:
+            download_hist_dict[r] if r in download_hist_dict
+            else 0
+        )
+        return r_ids
 
     def requests(self, peers, history):
         """
@@ -107,14 +144,22 @@ class Mi23StdClient(Peer):
             chosen = []
             bws = []
         else:
-            logging.debug("Still here: uploading to a random peer")
-            # change my internal state for no reason
-            self.dummy_state["cake"] = "pie"
+            logging.debug(
+                "Still here: upload to peers with highest download rate"
+            )
 
-            request = random.choice(requests)
-            chosen = [request.requester_id]
+            ordered_request_ids = self.order_download_rate(history)
+
+            request_ids = ordered_requests[:self.num_open_slots - 1]
+
+            # optimistically unchoke one random request
+            optimistic_unchoked_request_id = random.choice(
+                ordered_requests[self.num_open_slots - 1:]
+            )
+            request.append(optimistic_unchoked_request_id)
+
             # Evenly "split" my upload bandwidth among the one chosen requester
-            bws = even_split(self.up_bw, len(chosen))
+            bws = even_split(self.up_bw, len(request_ids))
 
         # create actual uploads out of the list of peer ids and bandwidths
         uploads = [Upload(self.id, peer_id, bw)
