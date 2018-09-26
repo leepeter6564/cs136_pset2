@@ -30,6 +30,10 @@ class Mi23Std(Peer):
 
     def order_rarest_pieces(self, needed_pieces):
         np = list(needed_pieces)
+
+        # shuffle first in order to break symmetry if two piece equally rare
+        random.shuffle(np)
+        
         np.sort(key=lambda n: len(self.piece_ownership[n]))
         return np
 
