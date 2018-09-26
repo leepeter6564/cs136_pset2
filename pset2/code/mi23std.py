@@ -15,6 +15,7 @@ class Mi23Std(Peer):
         self.piece_ownership = dict()
         self.num_open_slots = 4
         self.lucky_peer = None
+        self.lucky_counter = 0
 
     def update_piece_ownership(self, peers):
         """
@@ -160,7 +161,7 @@ class Mi23Std(Peer):
                 msg += ","
 
             if not have_a_full_piece:
-                msg = "No full Piece"
+                msg = "No full piece"
 
             logging.debug(msg)
 
@@ -169,7 +170,7 @@ class Mi23Std(Peer):
 
         else:
             logging.debug(
-                "Still here: upload to peers with highest download rate"
+                "\n Still here: upload to peers with highest download rate \n"
             )
 
             ordered_request_ids = self.order_download_rate(history, requests)
@@ -177,19 +178,30 @@ class Mi23Std(Peer):
             chosen = ordered_request_ids[:self.num_open_slots - 1]
 
             # optimistically choose to unchoke one random request every 30 sec
-            if len(chosen) >= 4 and round % 3 == 0:
+
+            have_lucky_to_replace = (
+                len(ordered_request_ids) >= self.num_open_slots
+            )
+
+            time_to_change_lucky = (
+                self.lucky_peer is None or self.lucky_counter % 3 == 0
+            )
+
+            if have_lucky_to_replace and time_to_change_lucky:
 
                 optimistic_unchoked_request_id = random.choice(
                     ordered_request_ids[self.num_open_slots - 1:]
                 )
 
                 self.lucky_peer = optimistic_unchoked_request_id
+                self.lucky_counter = 0
 
             if self.lucky_peer is not None:
                 chosen.append(self.lucky_peer)
+                self.lucky_counter += 1
 
             chosen_str = "Our chosen: " + str(chosen)
-            requests_str = "Our requets: " + str(requests)
+            requests_str = "Our requests: " + str(ordered_request_ids)
             logging.debug(
                 chosen_str
             )
