@@ -94,6 +94,7 @@ def load_modules(agent_classes):
         module_name = class_name.lower()  # by convention / fiat
         module = __import__(module_name)
         agent_class = module.__dict__[class_name]
+        
         return (class_name, agent_class)
 
     return dict(map(load, agent_classes))

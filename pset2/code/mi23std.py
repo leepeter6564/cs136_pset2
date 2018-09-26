@@ -8,7 +8,7 @@ from util import even_split
 from peer import Peer
 
 
-class Mi23StdClient(Peer):
+class Mi23Std(Peer):
 
     def post_init(self):
         print "post_init(): %s here!" % self.id
@@ -21,13 +21,13 @@ class Mi23StdClient(Peer):
         """
         for peer in peers:
             for piece in peer.available_pieces:
-                if self.piece_ownership[piece] is None:
+                if piece not in self.piece_ownership:
                     self.piece_ownership[piece] = set([peer])
                 else:
                     self.piece_ownership[piece].add(peer)
 
     def order_rarest_pieces(self, needed_pieces):
-        np = needed_pieces.copy()
+        np = list(needed_pieces)
         np.sort(key=lambda n: len(self.piece_ownership[n]))
         return np
 
@@ -38,14 +38,24 @@ class Mi23StdClient(Peer):
         """
         dl_hist_dict = dict()
 
+        last_round = history.last_round()
+
+        print "HI IN GET DOWNLOAD HIST"
+        print("history.downloads length = {}, last round = {}"\
+                .format(len(history.downloads), last_round))
+
         # first look at dl history from last round
-        for dl_hist_past in history.downloads[history.last_round()]:
+        for dl_hist_past in history.downloads[last_round]:
             print "dl_hist_past"
             print dl_hist_past
             dl_hist_dict[dl_hist_past.from_id] = dl_hist_past.blocks
 
+        # if we are in the 1st round, there is no data from 2 rounds ago
+        if last_round == 0:
+            return dl_hist_dict
+
         # then, look at dl history from current round
-        for dl_hist_curr in history.downloads[history.current_round()]:
+        for dl_hist_curr in history.downloads[last_round-1]:
             if dl_hist_dict[dl_hist_curr.from_id] is None:
                 dl_hist_dict[dl_hist_curr.from_id] = dl_hist_curr.blocks
             else:
@@ -99,7 +109,7 @@ class Mi23StdClient(Peer):
         random.shuffle(needed_pieces)
 
         # Update ownerships of neighbors!
-        self.update_piece_ownership(peers, needed_pieces)
+        self.update_piece_ownership(peers)
 
         # request all available pieces from all peers!
         # (up to self.max_requests from each)
@@ -150,14 +160,15 @@ class Mi23StdClient(Peer):
                 "Still here: upload to peers with highest download rate"
             )
 
-            ordered_request_ids = self.order_download_rate(history)
+            ordered_request_ids = self.order_download_rate(history, requests)
 
-            request_ids = ordered_requests[:self.num_open_slots - 1]
+            request_ids = ordered_request_ids[:self.num_open_slots - 1]
 
             # optimistically unchoke one random request
             optimistic_unchoked_request_id = random.choice(
-                ordered_requests[self.num_open_slots - 1:]
+                ordered_request_ids[self.num_open_slots - 1:]
             )
+            
             request.append(optimistic_unchoked_request_id)
 
             # Evenly "split" my upload bandwidth among the one chosen requester
