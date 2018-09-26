@@ -14,6 +14,7 @@ class Mi23Std(Peer):
         print "post_init(): %s here!" % self.id
         self.piece_ownership = dict()
         self.num_open_slots = 4
+        self.lucky_peer = None
 
     def update_piece_ownership(self, peers):
         """
@@ -40,14 +41,8 @@ class Mi23Std(Peer):
 
         last_round = history.last_round()
 
-        print "HI IN GET DOWNLOAD HIST"
-        print("history.downloads length = {}, last round = {}"\
-                .format(len(history.downloads), last_round))
-
         # first look at dl history from last round
         for dl_hist_past in history.downloads[last_round]:
-            print "dl_hist_past"
-            print dl_hist_past
             dl_hist_dict[dl_hist_past.from_id] = dl_hist_past.blocks
 
         # if we are in the 1st round, there is no data from 2 rounds ago
@@ -56,7 +51,7 @@ class Mi23Std(Peer):
 
         # then, look at dl history from current round
         for dl_hist_curr in history.downloads[last_round-1]:
-            if dl_hist_dict[dl_hist_curr.from_id] is None:
+            if dl_hist_curr.from_id not in dl_hist_dict:
                 dl_hist_dict[dl_hist_curr.from_id] = dl_hist_curr.blocks
             else:
                 dl_hist_dict[dl_hist_curr.from_id] += dl_hist_curr.blocks
@@ -72,7 +67,7 @@ class Mi23Std(Peer):
         download_hist_dict = self.get_download_history(history)
 
         r_ids = [request.requester_id for request in requests]
-        r_ids.sort(
+        r_ids.sort(key=
             lambda r:
             download_hist_dict[r] if r in download_hist_dict
             else 0
@@ -95,14 +90,14 @@ class Mi23Std(Peer):
         logging.debug("%s here: still need pieces %s" % (
             self.id, needed_pieces))
 
-        logging.debug("%s still here. Here are some peers:" % self.id)
-        for p in peers:
-            logging.debug(
-                "id: %s, available pieces: %s" % (p.id, p.available_pieces)
-            )
+        # logging.debug("%s still here. Here are some peers:" % self.id)
+        # for p in peers:
+        #     logging.debug(
+        #         "id: %s, available pieces: %s" % (p.id, p.available_pieces)
+        #     )
 
-        logging.debug("And look, I have my entire history available too:")
-        logging.debug(str(history))
+        # logging.debug("And look, I have my entire history available too:")
+        # logging.debug(str(history))
 
         requests = []   # We'll put all the things we want here
         # Symmetry breaking is good...
@@ -152,9 +147,26 @@ class Mi23Std(Peer):
         # the previous round.
 
         if len(requests) == 0:
-            logging.debug("No one wants my pieces!")
+
+            msg = "Unwanted pieces: "
+
+            have_a_full_piece = False
+            
+            for num_pieces in self.pieces:
+                if num_pieces == self.conf.blocks_per_piece:
+                    have_a_full_piece = True
+
+                msg += str(num_pieces)
+                msg += ","
+
+            if not have_a_full_piece:
+                msg = "No full Piece"
+
+            logging.debug(msg)
+
             chosen = []
             bws = []
+
         else:
             logging.debug(
                 "Still here: upload to peers with highest download rate"
@@ -162,17 +174,36 @@ class Mi23Std(Peer):
 
             ordered_request_ids = self.order_download_rate(history, requests)
 
-            request_ids = ordered_request_ids[:self.num_open_slots - 1]
+            chosen = ordered_request_ids[:self.num_open_slots - 1]
 
-            # optimistically unchoke one random request
-            optimistic_unchoked_request_id = random.choice(
-                ordered_request_ids[self.num_open_slots - 1:]
+            # optimistically choose to unchoke one random request every 30 sec
+            if len(chosen) >= 4 and round % 3 == 0:
+
+                optimistic_unchoked_request_id = random.choice(
+                    ordered_request_ids[self.num_open_slots - 1:]
+                )
+
+                self.lucky_peer = optimistic_unchoked_request_id
+
+            if self.lucky_peer is not None:
+                chosen.append(self.lucky_peer)
+
+            chosen_str = "Our chosen: " + str(chosen)
+            requests_str = "Our requets: " + str(requests)
+            logging.debug(
+                chosen_str
             )
-            
-            request.append(optimistic_unchoked_request_id)
+
+            logging.debug(
+                requests_str
+            )
+
+            logging.debug(
+                "\nLucky Peer for %s: %s.\n" % (self.id, self.lucky_peer)
+            )
 
             # Evenly "split" my upload bandwidth among the one chosen requester
-            bws = even_split(self.up_bw, len(request_ids))
+            bws = even_split(self.up_bw, len(chosen))
 
         # create actual uploads out of the list of peer ids and bandwidths
         uploads = [Upload(self.id, peer_id, bw)
