@@ -6,9 +6,10 @@ import logging
 from messages import Upload, Request
 from util import even_split
 from peer import Peer
+from mi23std import Mi23Std
 
 
-class Mi23PropShare(Peer):
+class Mi23PropShare(Mi23Std):
 
     def post_init(self):
         print "post_init(): %s here!" % self.id
@@ -76,7 +77,6 @@ class Mi23PropShare(Peer):
         # otherwise use the reserved amount of bandwidth
         else:
             dl_prop.append(self.percent_opt_bw)
-        print(dl_prop)
 
         # lengths must match
         assert(len(valid_requesters) == len(dl_prop), "Lengths don't match!")
@@ -115,9 +115,6 @@ class Mi23PropShare(Peer):
             isect = av_set.intersection(np_set)
             # order the pieces we can get in rarest-first order
             prioritized_pieces = self.order_rarest_pieces(list(isect))
-
-            # prioritize further the pieces that we already have blocks for
-            # prioritized_pieces.sort(key=lambda k: self.pieces[k], reverse=True)
 
             n = min(self.max_requests, len(isect))
 
