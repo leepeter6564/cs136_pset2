@@ -33,7 +33,7 @@ class Mi23Std(Peer):
 
         # shuffle first in order to break symmetry if two piece equally rare
         random.shuffle(np)
-        
+
         np.sort(key=lambda n: len(self.piece_ownership[n]))
         return np
 
@@ -72,8 +72,10 @@ class Mi23Std(Peer):
         download_hist_dict = self.get_download_history(history)
 
         r_ids = [request.requester_id for request in requests]
-        r_ids.sort(key=
-            lambda r:
+        # shuffle before sorting to break symmetry/ties
+        random.shuffle(r_ids)
+        r_ids.sort(
+            key=lambda r:
             download_hist_dict[r] if r in download_hist_dict
             else 0
         )
@@ -154,9 +156,7 @@ class Mi23Std(Peer):
         if len(requests) == 0:
 
             msg = "Unwanted pieces: "
-
             have_a_full_piece = False
-            
             for num_pieces in self.pieces:
                 if num_pieces == self.conf.blocks_per_piece:
                     have_a_full_piece = True
@@ -206,13 +206,9 @@ class Mi23Std(Peer):
 
             chosen_str = "Our chosen: " + str(chosen)
             requests_str = "Our requests: " + str(ordered_request_ids)
-            logging.debug(
-                chosen_str
-            )
+            logging.debug(chosen_str)
 
-            logging.debug(
-                requests_str
-            )
+            logging.debug(requests_str)
 
             logging.debug(
                 "\nLucky Peer for %s: %s.\n" % (self.id, self.lucky_peer)
