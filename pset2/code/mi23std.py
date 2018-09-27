@@ -14,7 +14,9 @@ class Mi23Std(Peer):
         print "post_init(): %s here!" % self.id
         self.piece_ownership = dict()
         self.num_open_slots = 4
+        # optimistically unchoked peer
         self.lucky_peer = None
+        # how many rounds we've had the optimistically unchoked peer for
         self.lucky_counter = 0
 
     def update_piece_ownership(self, peers):
@@ -71,7 +73,8 @@ class Mi23Std(Peer):
 
         download_hist_dict = self.get_download_history(history)
 
-        r_ids = [request.requester_id for request in requests]
+        # remove duplicates, so that client can upload to more varied peers
+        r_ids = list(set([request.requester_id for request in requests]))
         # shuffle before sorting to break symmetry/ties
         random.shuffle(r_ids)
         r_ids.sort(
@@ -112,6 +115,9 @@ class Mi23Std(Peer):
             # order the pieces we can get in rarest-first order
             prioritized_pieces = self.order_rarest_pieces(list(isect))
 
+            # prioritize further the pieces that we already have blocks for
+            # prioritized_pieces.sort(key=lambda k: self.pieces[k], reverse=True)
+
             n = min(self.max_requests, len(isect))
 
             # request the first `n' rarest pieces that the peer has
@@ -146,6 +152,7 @@ class Mi23Std(Peer):
 
         if len(requests) == 0:
 
+            # debugging
             msg = "Unwanted pieces: "
             have_a_full_piece = False
             for num_pieces in self.pieces:
@@ -157,7 +164,6 @@ class Mi23Std(Peer):
 
             if not have_a_full_piece:
                 msg = "No full piece"
-
             logging.debug(msg)
 
             chosen = []
@@ -165,25 +171,36 @@ class Mi23Std(Peer):
 
         else:
             logging.debug(
+                "My requests are: %s" % (
+                    [
+                        "Requester: %s, Requested piece: %s" %
+                        (r.requester_id, r.piece_id)
+                        for r in requests
+                    ]
+                )
+            )
+            logging.debug(
                 "\n Still here: upload to peers with highest download rate \n"
             )
 
+            # get the ids of requesters in order of most downloaded from in
+            # recent history
             ordered_request_ids = self.order_download_rate(history, requests)
-
+            # select first num_open_slots - 1 to unchoke
             chosen = ordered_request_ids[:self.num_open_slots - 1]
 
-            # optimistically choose to unchoke one random request every 30 sec
-
+            # do we have enough requestors to optimistically unchoke one?
             have_lucky_to_replace = (
                 len(ordered_request_ids) >= self.num_open_slots
             )
 
+            # is it time to optimistically unchoke another peer?
             time_to_change_lucky = (
                 self.lucky_peer is None or self.lucky_counter % 3 == 0
             )
 
             if have_lucky_to_replace and time_to_change_lucky:
-
+                # optimistically choose to unchoke one random request every 30s
                 optimistic_unchoked_request_id = random.choice(
                     ordered_request_ids[self.num_open_slots - 1:]
                 )
@@ -195,12 +212,11 @@ class Mi23Std(Peer):
                 chosen.append(self.lucky_peer)
                 self.lucky_counter += 1
 
+            # debugging
             chosen_str = "Our chosen: " + str(chosen)
             requests_str = "Our requests: " + str(ordered_request_ids)
             logging.debug(chosen_str)
-
             logging.debug(requests_str)
-
             logging.debug(
                 "\nLucky Peer for %s: %s.\n" % (self.id, self.lucky_peer)
             )
