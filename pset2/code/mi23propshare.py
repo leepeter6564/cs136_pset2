@@ -38,7 +38,10 @@ class Mi23PropShare(Mi23Std):
 
         # first look at dl history from last round
         for dl_hist_past in history.downloads[last_round]:
-            dl_hist_dict[dl_hist_past.from_id] = dl_hist_past.blocks
+            if dl_hist_past.from_id not in dl_hist_dict.keys():
+                dl_hist_dict[dl_hist_past.from_id] = dl_hist_past.blocks
+            else:
+                dl_hist_dict[dl_hist_past.from_id] += dl_hist_past.blocks
 
         return dl_hist_dict
 
@@ -77,6 +80,8 @@ class Mi23PropShare(Mi23Std):
         # otherwise use the reserved amount of bandwidth
         else:
             dl_prop.append(self.percent_opt_bw)
+
+        print dl_prop
 
         # lengths must match
         assert(len(valid_requesters) == len(dl_prop), "Lengths don't match!")
