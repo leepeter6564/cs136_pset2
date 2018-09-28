@@ -110,10 +110,10 @@ class Mi23PropShare(Mi23Std):
             prioritized_pieces = self.order_rarest_pieces(list(isect))
 
             # randomize whether to prioritize rarest or blocks already had!
-            # if random.random() > 0.5:
-            #     prioritized_pieces.sort(
-            #         key=lambda k: self.pieces[k], reverse=True
-            #     )
+            if random.random() > 0.5:
+                prioritized_pieces.sort(
+                    key=lambda k: self.pieces[k], reverse=True
+                )
 
             n = min(self.max_requests, len(isect))
 

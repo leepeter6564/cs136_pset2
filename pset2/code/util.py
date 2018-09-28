@@ -41,7 +41,7 @@ def stddev(lst):
     if len(lst) == 0:
         return 0
     m = mean(lst)
-    return math.sqrt(sum((x-m)*(x-m) for x in lst) / len(lst))
+    return math.sqrt(1.0 * sum((x-m)*(x-m) for x in lst) / len(lst))
 
 
 def median(numeric):
@@ -55,6 +55,15 @@ def median(numeric):
         return (float(lower + upper)) / 2
 
 
+def mean_pos(baseline, lst):
+    total = 0.0
+    for num in lst:
+        if num == -1:
+            total += baseline
+        else:
+            total += num
+
+    return total / float(len(lst))
 
 def even_split(n, k):
     """

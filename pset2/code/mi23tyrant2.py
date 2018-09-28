@@ -8,20 +8,21 @@ from util import even_split, mean_pos
 from peer import Peer
 
 
-class Mi23Tyrant(Peer):
+class Mi23Tyrant2(Peer):
 
     def post_init(self):
         print "post_init(): %s here!" % self.id
         self.piece_ownership = dict()
         self.num_open_slots = 4
-        self.gamma = 0.10
+        self.gamma = 0.1
         self.r = 3
-        self.alpha = 0.20
+        self.alpha = 0.2
         self.estimated_dl_rate = dict()
         self.estimated_up_threshold = dict()
         self.cap = self.up_bw
         self.unchoked_hist = dict()
         self.round = 0
+        self.requested_last_round = dict()
 
     def update_piece_ownership(self, peers):
         """
@@ -43,15 +44,6 @@ class Mi23Tyrant(Peer):
         np.sort(key=lambda n: len(self.piece_ownership[n]))
         return np
 
-    def update_dl_hist(self, last_three_rounds, new_round):
-        """
-        given (a, b, c) and d, return (b, c, d)
-        """
-        new_past = last_three_rounds[1:]
-        new_past.append(new_round)
-
-        return new_past
-
     def get_download_history(self, peers, history):
         """
         Create dictionary of which peers uploaded how much to client in the
@@ -61,7 +53,7 @@ class Mi23Tyrant(Peer):
 
         for peer in peers:
             if peer.id not in dl_hist_dict.keys():
-                dl_hist_dict[peer.id] = [-1, -1, -1]
+                dl_hist_dict[peer.id] = -1
 
         last_round = history.last_round()
 
@@ -71,9 +63,7 @@ class Mi23Tyrant(Peer):
         # look at the download history from last round to see who uploaded
         for dl_hist_past in history.downloads[last_round]:
             if dl_hist_past.from_id in dl_hist_dict.keys():
-                dl_hist_dict[dl_hist_past.from_id] = self.update_dl_hist(
-                    dl_hist_dict[dl_hist_past.from_id], dl_hist_past.blocks
-                )
+                dl_hist_dict[dl_hist_past.from_id] = dl_hist_past.blocks
 
         return dl_hist_dict
 
@@ -145,7 +135,7 @@ class Mi23Tyrant(Peer):
         self.update_piece_ownership(peers)
 
         # get info on which peers unchoked us last round
-        blocks_dl_last_three_rounds = self.get_download_history(peers, history)
+        blocks_dl_last_round = self.get_download_history(peers, history)
         self.round += 1
         for peer in peers:
             # initialize unchoking history
@@ -154,35 +144,34 @@ class Mi23Tyrant(Peer):
             # initialize estimated upload bw threshold
             if peer.id not in self.estimated_up_threshold.keys():
                 self.estimated_up_threshold[peer.id] = self.up_bw / 4.0
+            # initialize whether client requested from peer
+            if peer.id not in self.requested_last_round.keys():
+                self.requested_last_round[peer.id] = False
 
         # request all available pieces from all peers!
         # (up to self.max_requests from each)
 
         for peer in peers:
 
-            # update upload threshold estimate
-            baseline_dl_rate_estimate = (
-                (len(peer.available_pieces)*self.conf.blocks_per_piece
-                 / float(self.round*4))  # assuming 4 upload slots
-                )
+            # # update upload threshold estimate
+            # baseline_dl_rate_estimate = (
+            #     (len(peer.available_pieces)*self.conf.blocks_per_piece
+            #      / float(self.round*4))  # assuming 4 upload slots
+            #     )
 
-            self.estimated_dl_rate[peer.id] = (
-                # mean_pos(
-                #     baseline_dl_rate_estimate,
-                #     blocks_dl_last_three_rounds[peer.id]
-                # )
-                self.cap / 4.0
-            )
-
+            # self.estimated_dl_rate[peer.id] = (
+            #     # mean_pos(
+            #     #     baseline_dl_rate_estimate,
+            #     #     blocks_dl_last_round[peer.id]
+            #     # )
+            #     self.cap / 4.0
+            # )
             # check if peer had unchoked us last round
-            if blocks_dl_last_three_rounds[peer.id][-1] >= 0:
+            if blocks_dl_last_round[peer.id] >= 0:
                 # keep track of how long we had been unchoked by the peer
                 self.unchoked_hist[peer.id] += 1
-                # update the estimated download flow, assuming they have
-                # four upload slots
-                self.estimated_dl_rate[peer.id] = (
-                    blocks_dl_last_three_rounds[peer.id][-1]
-                )
+                # update the estimated download flow to observed rate
+                self.estimated_dl_rate[peer.id] = blocks_dl_last_round[peer.id]
                 # if unchoked for `r' rounds, adjust threshold
                 if self.unchoked_hist[peer.id] == self.r:
                     curr_threshold = self.estimated_up_threshold[peer.id]
@@ -193,10 +182,17 @@ class Mi23Tyrant(Peer):
                     self.unchoked_hist[peer.id] = 0
             # update estimate threshold if peer did not unchoke us
             else:
-                # estimate the download flowrate
-                self.estimated_up_threshold[peer.id] = (
-                    (1 + self.alpha) * self.estimated_up_threshold[peer.id]
-                )
+                # update upload threshold estimate
+                self.estimated_dl_rate[peer.id] = (
+                    (len(peer.available_pieces)*self.conf.blocks_per_piece
+                     / float(self.round*4))  # assuming 4 upload slots
+                    )
+
+                if self.requested_last_round is True:
+                    # update the upload threshold
+                    self.estimated_up_threshold[peer.id] = (
+                        (1 + self.alpha) * self.estimated_up_threshold[peer.id]
+                    )
                 # reset round counter
                 self.unchoked_hist[peer.id] = 0
 
@@ -212,6 +208,12 @@ class Mi23Tyrant(Peer):
                 )
 
             n = min(self.max_requests, len(isect))
+
+            # check to see if the client made request to peer
+            if len(prioritized_pieces[:n]) > 0:
+                self.requested_last_round[peer.id] = True
+            else:
+                self.requested_last_round[peer.id] = False
 
             # request the first `n' rarest pieces that the peer has
             for piece_id in prioritized_pieces[:n]:
