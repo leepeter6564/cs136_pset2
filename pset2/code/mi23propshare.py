@@ -16,17 +16,6 @@ class Mi23PropShare(Mi23Std):
         self.piece_ownership = dict()
         self.percent_opt_bw = 0.1
 
-    def update_piece_ownership(self, peers):
-        """
-        Create dictionary of needed pieces and the agents who have them
-        """
-        for peer in peers:
-            for piece in peer.available_pieces:
-                if piece not in self.piece_ownership:
-                    self.piece_ownership[piece] = set([peer])
-                else:
-                    self.piece_ownership[piece].add(peer)
-
     def get_download_history(self, history):
         """
         Create dictionary of how much the client downloaded from its peers
@@ -43,6 +32,11 @@ class Mi23PropShare(Mi23Std):
             else:
                 dl_hist_dict[dl_hist_past.from_id] += dl_hist_past.blocks
 
+        logging.debug("%s past download history : %s" % (
+            self.id, str(dl_hist_dict)
+            )
+        )
+
         return dl_hist_dict
 
     def get_dl_proportions(self, history, requests):
@@ -58,6 +52,7 @@ class Mi23PropShare(Mi23Std):
 
         # remove duplicates, so that client can upload to more varied peers
         r_ids = list(set([request.requester_id for request in requests]))
+
         # check if client had downloaded from requester
         for r_id in r_ids:
             if r_ids in download_hist_dict.keys():
@@ -65,7 +60,7 @@ class Mi23PropShare(Mi23Std):
                 amount_downloaded.append(download_hist_dict[r_id])
 
         dl_prop = [
-            a/float(sum(amount_downloaded)) * (1 - self.percent_opt_bw)
+            a/float(sum(amount_downloaded))*(1-self.percent_opt_bw)*self.up_bw
             for a
             in amount_downloaded
         ]
@@ -76,19 +71,12 @@ class Mi23PropShare(Mi23Std):
         # if there were no requests and we are only optimistically unchocking,
         # don't limit bandwidth
         if len(valid_requesters) == 1:
-            dl_prop.append(1)
+            dl_prop.append(self.up_bw)
         # otherwise use the reserved amount of bandwidth
         else:
-            dl_prop.append(self.percent_opt_bw)
+            dl_prop.append(self.percent_opt_bw*self.up_bw)
 
-        print dl_prop
-
-        # lengths must match
-        assert(len(valid_requesters) == len(dl_prop), "Lengths don't match!")
-        # proportions should sum to 1
-        assert(sum(dl_prop) == 1, "Proportions don't add up to 1!")
-
-        return r_ids, dl_prop
+        return valid_requesters, dl_prop
 
     def requests(self, peers, history):
         """
@@ -108,7 +96,7 @@ class Mi23PropShare(Mi23Std):
 
         requests = []   # We'll put all the things we want here
         # Symmetry breaking is good...
-        random.shuffle(needed_pieces)
+        # random.shuffle(needed_pieces)
 
         # Update ownerships of neighbors!
         self.update_piece_ownership(peers)
@@ -120,6 +108,12 @@ class Mi23PropShare(Mi23Std):
             isect = av_set.intersection(np_set)
             # order the pieces we can get in rarest-first order
             prioritized_pieces = self.order_rarest_pieces(list(isect))
+
+            # randomize whether to prioritize rarest or blocks already had!
+            # if random.random() > 0.5:
+            #     prioritized_pieces.sort(
+            #         key=lambda k: self.pieces[k], reverse=True
+            #     )
 
             n = min(self.max_requests, len(isect))
 
