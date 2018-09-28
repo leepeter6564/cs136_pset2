@@ -80,7 +80,11 @@ class Mi23Tyrant(Peer):
             )
 
         r_ids.sort(key=lambda k: ratio_dict[k], reverse=True)
-        up_thresholds = [self.estimated_up_threshold[r_id] for r_id in r_ids]
+        up_thresholds = [
+            int(self.estimated_up_threshold[r_id])
+            for r_id
+            in r_ids
+        ]
 
         final_ids = []
         final_up_bws = []
@@ -88,9 +92,13 @@ class Mi23Tyrant(Peer):
         bw_sum = 0
         for tau, r_id in zip(up_thresholds, r_ids):
             bw_sum += tau
-            if bw_sum < self.cap:
+            if bw_sum < self.up_bw:
                 final_ids.append(r_id)
                 final_up_bws.append(tau)
+            elif bw_sum > self.up_bw:
+                final_ids.append(r_id)
+                final_up_bws.append(self.up_bw - (bw_sum - tau))
+                break
             else:
                 break
 
@@ -134,12 +142,13 @@ class Mi23Tyrant(Peer):
                     self.unchoked_hist[peer.id] += 1
                 # update the estimated download flow
                 self.estimated_dl_rate[peer.id] = (
-                    len(peer.available_pieces) / float(self.round)
+                    len(peer.available_pieces) / float(self.round * 4)
+                    # self.cap / (4.0)
                 )
                 # initialize upload threshold if have not done it already
                 if peer.id not in self.estimated_up_threshold.keys():
-                    self.estimated_up_threshold[peer.id] = self.up_bw / 3.0
-                # if unchoked for multiple rounds, adjust threshold
+                    self.estimated_up_threshold[peer.id] = self.up_bw / 5
+                # if unchoked for `r' rounds, adjust threshold
                 elif self.unchoked_hist[peer.id] == self.r:
                     curr_threshold = self.estimated_up_threshold[peer.id]
                     self.estimated_up_threshold[peer.id] = (
@@ -166,9 +175,9 @@ class Mi23Tyrant(Peer):
 
             # prioritize further the pieces that we already have blocks for
             # if random.random() > 0.5:
-                # prioritized_pieces.sort(
-                #     key=lambda k: self.pieces[k], reverse=True
-                # )
+            #     prioritized_pieces.sort(
+            #         key=lambda k: self.pieces[k], reverse=True
+            #     )
 
             n = min(self.max_requests, len(isect))
 
