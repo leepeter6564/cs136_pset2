@@ -48,6 +48,9 @@ class Mi23Std(Peer):
 
         last_round = history.last_round()
 
+        if last_round == -1:
+            return dl_hist_dict
+
         # first look at dl history from last round
         for dl_hist_past in history.downloads[last_round]:
             dl_hist_dict[dl_hist_past.from_id] = dl_hist_past.blocks

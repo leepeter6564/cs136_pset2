@@ -33,7 +33,6 @@ class Dummy(Peer):
         needed_pieces = filter(needed, range(len(self.pieces)))
         np_set = set(needed_pieces)  # sets support fast intersection ops.
 
-
         logging.debug("%s here: still need pieces %s" % (
             self.id, needed_pieces))
 

@@ -4,6 +4,7 @@ import random
 from messages import Upload, Request
 from util import even_split
 
+
 class Peer:
     def __init__(self, config, id, init_pieces, up_bandwidth):
         self.conf = config
