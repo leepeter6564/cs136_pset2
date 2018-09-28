@@ -6,19 +6,22 @@ import logging
 from messages import Upload, Request
 from util import even_split
 from peer import Peer
-from mi23std import Mi23Std
 
 
-class Mi23Tyr(Mi23Std):
+class Mi23Tyrant(Peer):
 
     def post_init(self):
         print "post_init(): %s here!" % self.id
         self.piece_ownership = dict()
         self.num_open_slots = 4
-        # optimistically unchoked peer
-        self.lucky_peer = None
-        # how many rounds we've had the optimistically unchoked peer for
-        self.lucky_counter = 0
+        self.gamma = 0.1
+        self.r = 3
+        self.alpha = 0.2
+        self.estimated_dl_rate = dict()
+        self.estimated_up_threshold = dict()
+        self.cap = self.up_bw
+        self.unchoked_hist = dict()
+        self.round = 0
 
     def update_piece_ownership(self, peers):
         """
@@ -40,50 +43,58 @@ class Mi23Tyr(Mi23Std):
         np.sort(key=lambda n: len(self.piece_ownership[n]))
         return np
 
-    def get_download_history(self, history):
+    def get_download_history(self, peers, history):
         """
-        Create dictionary of how much the client downloaded from its peers
-        in the last two rounds
+        Create dictionary of which peers uploaded to client in last round
         """
         dl_hist_dict = dict()
 
         last_round = history.last_round()
 
-        # first look at dl history from last round
-        for dl_hist_past in history.downloads[last_round]:
-            dl_hist_dict[dl_hist_past.from_id] = dl_hist_past.blocks
-
-        # if we are in the 1st round, there is no data from 2 rounds ago
-        if last_round == 0:
+        if last_round == -1:
             return dl_hist_dict
 
-        # then, look at dl history from current round
-        for dl_hist_curr in history.downloads[last_round-1]:
-            if dl_hist_curr.from_id not in dl_hist_dict:
-                dl_hist_dict[dl_hist_curr.from_id] = dl_hist_curr.blocks
-            else:
-                dl_hist_dict[dl_hist_curr.from_id] += dl_hist_curr.blocks
+        # look at the download history from last round to see who uploaded
+        for dl_hist_past in history.downloads[last_round]:
+            if dl_hist_past.from_id not in dl_hist_dict.keys():
+                dl_hist_dict[dl_hist_past.from_id] = True
+        # set everyone else to False
+        for peer in peers:
+            if peer.id not in dl_hist_dict.keys():
+                dl_hist_dict[peer.id] = False
 
         return dl_hist_dict
 
-    def order_download_rate(self, history, requests):
+    def order_ratio(self, requests):
         """
-        Create dictionary of download rate, rank the requesters in the order
-        of download rate
+        Get the ordering of peers by the ratio of their dl/ul
         """
-
-        download_hist_dict = self.get_download_history(history)
-
-        # remove duplicates, so that client can upload to more varied peers
         r_ids = list(set([request.requester_id for request in requests]))
-        # shuffle before sorting to break symmetry/ties
-        random.shuffle(r_ids)
-        r_ids.sort(
-            key=lambda r:
-            download_hist_dict[r] if r in download_hist_dict
-            else 0
-        )
-        return r_ids
+        up_thresholds = []
+
+        ratio_dict = dict()
+        for r_id in r_ids:
+            ratio_dict[r_id] = (
+                (float(self.estimated_dl_rate[r_id]) /
+                 self.estimated_up_threshold[r_id])
+            )
+
+        r_ids.sort(key=lambda k: ratio_dict[k], reverse=True)
+        up_thresholds = [self.estimated_up_threshold[r_id] for r_id in r_ids]
+
+        final_ids = []
+        final_up_bws = []
+
+        bw_sum = 0
+        for tau, r_id in zip(up_thresholds, r_ids):
+            bw_sum += tau
+            if bw_sum < self.cap:
+                final_ids.append(r_id)
+                final_up_bws.append(tau)
+            else:
+                break
+
+        return final_ids, final_up_bws
 
     def requests(self, peers, history):
         """
@@ -108,16 +119,56 @@ class Mi23Tyr(Mi23Std):
         # Update ownerships of neighbors!
         self.update_piece_ownership(peers)
 
+        dl_hist = self.get_download_history(peers, history)
         # request all available pieces from all peers!
         # (up to self.max_requests from each)
         for peer in peers:
+            self.round += 1
+            # check if peer had unchoked us last round
+            if peer.id in dl_hist.keys():
+                # keep track of how long we had been unchoked by the peer
+                if peer.id not in self.unchoked_hist.keys():
+                    # theoretically this shouldn't happen, but just in case
+                    self.unchoked_hist[peer.id] = 1
+                else:
+                    self.unchoked_hist[peer.id] += 1
+                # update the estimated download flow
+                self.estimated_dl_rate[peer.id] = (
+                    len(peer.available_pieces) / float(self.round)
+                )
+                # initialize upload threshold if have not done it already
+                if peer.id not in self.estimated_up_threshold.keys():
+                    self.estimated_up_threshold[peer.id] = self.up_bw / 3.0
+                # if unchoked for multiple rounds, adjust threshold
+                elif self.unchoked_hist[peer.id] == self.r:
+                    curr_threshold = self.estimated_up_threshold[peer.id]
+                    self.estimated_up_threshold[peer.id] = (
+                        (1 - self.gamma) * curr_threshold
+                    )
+                    # reset round counter
+                    self.unchoked_hist[peer.id] = 0
+            # update threshold if peer did not unchoke us
+            else:
+                # don't initialize threshold if we haven't interacted yet
+                if peer.id not in self.estimated_up_threshold.keys():
+                    pass
+                else:
+                    self.estimated_up_threshold[peer.id] = (
+                        (1 + self.alpha) * self.estimated_up_threshold[peer.id]
+                    )
+                # reset round counter
+                self.unchoked_hist[peer.id] = 0
+
             av_set = set(peer.available_pieces)
             isect = av_set.intersection(np_set)
             # order the pieces we can get in rarest-first order
             prioritized_pieces = self.order_rarest_pieces(list(isect))
 
             # prioritize further the pieces that we already have blocks for
-            # prioritized_pieces.sort(key=lambda k: self.pieces[k], reverse=True)
+            # if random.random() > 0.5:
+                # prioritized_pieces.sort(
+                #     key=lambda k: self.pieces[k], reverse=True
+                # )
 
             n = min(self.max_requests, len(isect))
 
@@ -184,46 +235,8 @@ class Mi23Tyr(Mi23Std):
                 "\n Still here: upload to peers with highest download rate \n"
             )
 
-            # get the ids of requesters in order of most downloaded from in
-            # recent history
-            ordered_request_ids = self.order_download_rate(history, requests)
-            # select first num_open_slots - 1 to unchoke
-            chosen = ordered_request_ids[:self.num_open_slots - 1]
-
-            # do we have enough requestors to optimistically unchoke one?
-            have_lucky_to_replace = (
-                len(ordered_request_ids) >= self.num_open_slots
-            )
-
-            # is it time to optimistically unchoke another peer?
-            time_to_change_lucky = (
-                self.lucky_peer is None or self.lucky_counter % 3 == 0
-            )
-
-            if have_lucky_to_replace and time_to_change_lucky:
-                # optimistically choose to unchoke one random request every 30s
-                optimistic_unchoked_request_id = random.choice(
-                    ordered_request_ids[self.num_open_slots - 1:]
-                )
-
-                self.lucky_peer = optimistic_unchoked_request_id
-                self.lucky_counter = 0
-
-            if self.lucky_peer is not None:
-                chosen.append(self.lucky_peer)
-                self.lucky_counter += 1
-
-            # debugging
-            chosen_str = "Our chosen: " + str(chosen)
-            requests_str = "Our requests: " + str(ordered_request_ids)
-            logging.debug(chosen_str)
-            logging.debug(requests_str)
-            logging.debug(
-                "\nLucky Peer for %s: %s.\n" % (self.id, self.lucky_peer)
-            )
-
             # Evenly "split" my upload bandwidth among the one chosen requester
-            bws = even_split(self.up_bw, len(chosen))
+            chosen, bws = self.order_ratio(requests)
 
         # create actual uploads out of the list of peer ids and bandwidths
         uploads = [Upload(self.id, peer_id, bw)
