@@ -117,17 +117,12 @@ class Mi23Std(Peer):
             isect = av_set.intersection(np_set)
             # order the pieces we can get in rarest-first order
             prioritized_pieces = self.order_rarest_pieces(list(isect))
-            # print "Looking at peer %s: " % peer.id
-            # print "prioritized pieces before: "
-            # print prioritized_pieces
 
             # prioritize further the pieces that we already have blocks for
             if random.random() > 0.5:
                 prioritized_pieces.sort(
                     key=lambda k: self.pieces[k], reverse=True
                 )
-            # print "prioritized pieces after: "
-            # print prioritized_pieces
 
             n = min(self.max_requests, len(isect))
 

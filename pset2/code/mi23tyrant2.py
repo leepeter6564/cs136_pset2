@@ -4,7 +4,7 @@ import random
 import logging
 
 from messages import Upload, Request
-from util import even_split, mean_pos
+from util import even_split
 from peer import Peer
 
 
@@ -13,7 +13,6 @@ class Mi23Tyrant2(Peer):
     def post_init(self):
         print "post_init(): %s here!" % self.id
         self.piece_ownership = dict()
-        self.num_open_slots = 4
         self.gamma = 0.1
         self.r = 3
         self.alpha = 0.2
@@ -51,44 +50,65 @@ class Mi23Tyrant2(Peer):
         """
         dl_hist_dict = dict()
 
+        # those not in the history of downloads, client did not download from
         for peer in peers:
             if peer.id not in dl_hist_dict.keys():
                 dl_hist_dict[peer.id] = -1
 
         last_round = history.last_round()
 
+        # if there is no last round, break
         if last_round == -1:
             return dl_hist_dict
 
         # look at the download history from last round to see who uploaded
         for dl_hist_past in history.downloads[last_round]:
-            if dl_hist_past.from_id in dl_hist_dict.keys():
-                dl_hist_dict[dl_hist_past.from_id] = dl_hist_past.blocks
+            if dl_hist_dict[dl_hist_past.from_id] < 0:
+                dl_hist_dict[dl_hist_past.from_id] = 0
+            dl_hist_dict[dl_hist_past.from_id] += dl_hist_past.blocks
 
         return dl_hist_dict
 
     def order_ratio(self, requests):
         """
-        Get the ordering of peers by the ratio of their dl/ul
+        Get the ordering of peers by the ratio of their dl/ul and return
+        the appropriate ids and bandwidth for allocation
         """
         r_ids = list(set([request.requester_id for request in requests]))
         up_thresholds = []
 
         ratio_dict = dict()
+        ratio_lst = []
         for r_id in r_ids:
             ratio_dict[r_id] = (
                 (float(self.estimated_dl_rate[r_id]) /
                  self.estimated_up_threshold[r_id])
             )
+            # ratio_lst.append(ratio_dict[r_id])
 
-        r_ids.sort(key=lambda k: ratio_dict[k], reverse=True)
+        # shuffle to break symmetry
+        random.shuffle(r_ids)
+        # sort ids and estimated thresholds in decreasing ratios
+        r_ids.sort(
+            key=lambda k: ratio_dict[k],
+            reverse=True
+        )
         up_thresholds = [
             int(self.estimated_up_threshold[r_id])
             for r_id
             in r_ids
         ]
+        # ratio_lst.sort(reverse=True)
 
-        # now choose up to our bandwidth limit
+        logging.debug("For %s:\n" % self.id)
+        logging.debug("IDs: %s" % r_ids)
+        logging.debug("DL est: %s" %
+                      [self.estimated_dl_rate[x] for x in r_ids])
+        logging.debug("UL thr: %s" %
+                      [self.estimated_up_threshold[x] for x in r_ids])
+        logging.debug("Ratio: %s" % [ratio_dict[x] for x in r_ids])
+
+        # now choose ids up to our bandwidth limit
         final_ids = []
         final_up_bws = []
 
@@ -98,12 +118,25 @@ class Mi23Tyrant2(Peer):
             if bw_sum <= self.cap:
                 final_ids.append(r_id)
                 final_up_bws.append(tau)
+                # if bandwidth up to cap, stop
                 if bw_sum == self.cap:
                     break
+            # if some bandwidth left over, allocate rest to the next best
             elif bw_sum > self.cap:
                 final_ids.append(r_id)
                 final_up_bws.append(self.cap - (bw_sum - tau))
                 break
+
+        # if there is leftover bandwidth, spread it out over the requests
+        if bw_sum < self.cap:
+            leftover = self.cap - bw_sum
+            # normalized_ratios = [
+            #     n/sum(ratio_lst) if sum(ratio_lst) > 0
+            #     else 1/len(ratio_lst) for n in ratio_lst
+            # ]
+            for i in range(len(final_up_bws)):
+                final_up_bws[i] += leftover / len(final_up_bws)
+
         logging.debug(
             "The ids are:\n %s \n and the bws are: \n %s" %
             (final_ids, final_up_bws)
@@ -143,7 +176,9 @@ class Mi23Tyrant2(Peer):
                 self.unchoked_hist[peer.id] = 0
             # initialize estimated upload bw threshold
             if peer.id not in self.estimated_up_threshold.keys():
-                self.estimated_up_threshold[peer.id] = self.up_bw / 4.0
+                self.estimated_up_threshold[peer.id] = (
+                    (self.conf.max_up_bw + self.conf.min_up_bw) / 4.0
+                )
             # initialize whether client requested from peer
             if peer.id not in self.requested_last_round.keys():
                 self.requested_last_round[peer.id] = False
@@ -152,20 +187,6 @@ class Mi23Tyrant2(Peer):
         # (up to self.max_requests from each)
 
         for peer in peers:
-
-            # # update upload threshold estimate
-            # baseline_dl_rate_estimate = (
-            #     (len(peer.available_pieces)*self.conf.blocks_per_piece
-            #      / float(self.round*4))  # assuming 4 upload slots
-            #     )
-
-            # self.estimated_dl_rate[peer.id] = (
-            #     # mean_pos(
-            #     #     baseline_dl_rate_estimate,
-            #     #     blocks_dl_last_round[peer.id]
-            #     # )
-            #     self.cap / 4.0
-            # )
             # check if peer had unchoked us last round
             if blocks_dl_last_round[peer.id] >= 0:
                 # keep track of how long we had been unchoked by the peer
@@ -174,9 +195,16 @@ class Mi23Tyrant2(Peer):
                 self.estimated_dl_rate[peer.id] = blocks_dl_last_round[peer.id]
                 # if unchoked for `r' rounds, adjust threshold
                 if self.unchoked_hist[peer.id] == self.r:
-                    curr_threshold = self.estimated_up_threshold[peer.id]
+                    logging.debug(
+                        "%s unchoked for r rounds!"
+                        " changing threshold from %s to %s!" % (
+                            peer.id,
+                            self.estimated_up_threshold[peer.id],
+                            (1-self.gamma)*self.estimated_up_threshold[peer.id]
+                        )
+                    )
                     self.estimated_up_threshold[peer.id] = (
-                        (1 - self.gamma) * curr_threshold
+                        (1 - self.gamma) * self.estimated_up_threshold[peer.id]
                     )
                     # reset round counter
                     self.unchoked_hist[peer.id] = 0
@@ -188,8 +216,8 @@ class Mi23Tyrant2(Peer):
                      / float(self.round*4))  # assuming 4 upload slots
                     )
 
+                # if we requested last round, update the upload threshold
                 if self.requested_last_round is True:
-                    # update the upload threshold
                     self.estimated_up_threshold[peer.id] = (
                         (1 + self.alpha) * self.estimated_up_threshold[peer.id]
                     )
@@ -198,6 +226,10 @@ class Mi23Tyrant2(Peer):
 
             av_set = set(peer.available_pieces)
             isect = av_set.intersection(np_set)
+
+            if len(isect) == 0:
+                self.estimated_dl_rate[peer.id] = 0
+
             # order the pieces we can get in rarest-first order
             prioritized_pieces = self.order_rarest_pieces(list(isect))
 
