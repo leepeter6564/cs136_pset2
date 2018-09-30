@@ -68,6 +68,7 @@ class Mi23PropShare(Mi23Std):
         # get the optimistically unchoked candidate
         opt_chosen = random.choice(list(set(r_ids) - set(valid_requesters)))
         valid_requesters.append(opt_chosen)
+
         # if there were no requests and we are only optimistically unchocking,
         # don't limit bandwidth
         if len(valid_requesters) == 1:
