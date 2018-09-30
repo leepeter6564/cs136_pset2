@@ -9,12 +9,32 @@ from peer import Peer
 from mi23std import Mi23Std
 
 
-class Mi23PropShare(Mi23Std):
+class Mi23PropShare(Peer):
 
     def post_init(self):
         print "post_init(): %s here!" % self.id
         self.piece_ownership = dict()
         self.percent_opt_bw = 0.1
+
+    def update_piece_ownership(self, peers):
+        """
+        Create dictionary of needed pieces and the agents who have them
+        """
+        for peer in peers:
+            for piece in peer.available_pieces:
+                if piece not in self.piece_ownership:
+                    self.piece_ownership[piece] = set([peer])
+                else:
+                    self.piece_ownership[piece].add(peer)
+
+    def order_rarest_pieces(self, needed_pieces):
+        np = list(needed_pieces)
+
+        # shuffle first in order to break symmetry if two piece equally rare
+        random.shuffle(np)
+
+        np.sort(key=lambda n: len(self.piece_ownership[n]))
+        return np
 
     def get_download_history(self, history):
         """

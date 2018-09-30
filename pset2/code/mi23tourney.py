@@ -15,7 +15,7 @@ class Mi23Tourney(Peer):
         self.piece_ownership = dict()
         self.gamma = 0.1
         self.r = 3
-        self.alpha = 0.2
+        self.alpha = 0.4
         self.estimated_dl_rate = dict()
         self.estimated_up_threshold = dict()
         self.cap = self.up_bw
@@ -40,7 +40,10 @@ class Mi23Tourney(Peer):
         # shuffle first in order to break symmetry if two piece equally rare
         random.shuffle(np)
 
-        np.sort(key=lambda n: len(self.piece_ownership[n]))
+        np.sort(
+            key=lambda n: len(self.piece_ownership[n]),
+            # reverse=True
+        )
         return np
 
     def get_download_history(self, peers, history):
@@ -173,11 +176,14 @@ class Mi23Tourney(Peer):
             # initialize estimated upload bw threshold
             if peer.id not in self.estimated_up_threshold.keys():
                 self.estimated_up_threshold[peer.id] = (
-                    (self.conf.max_up_bw + self.conf.min_up_bw) / 4.0
+                    (self.conf.max_up_bw + self.conf.min_up_bw) / 8.0
                 )
             # initialize whether client requested from peer
             if peer.id not in self.requested_last_round.keys():
                 self.requested_last_round[peer.id] = False
+
+        # decay alpha
+        self.alpha = max(self.alpha * 0.98, 0.2)
 
         # request all available pieces from all peers!
         # (up to self.max_requests from each)
@@ -230,6 +236,9 @@ class Mi23Tourney(Peer):
 
             # order the pieces we can get in rarest-first order
             prioritized_pieces = self.order_rarest_pieces(list(isect))
+
+            # if random.random > 0.5:
+            #     prioritized_pieces = prioritized_pieces[::-1]
 
             # prioritize further the pieces that we already have blocks for
             if random.random() > 0.5:
